@@ -21,6 +21,13 @@ RUN apk add --no-cache --update git && \
 # Run phase.
 FROM nginx:1.29.7-alpine as run
 
+# Pull latest Alpine package versions before adding application files.
+# Without this, the published image inherits whatever package versions were
+# baked into the nginx:1.29.7-alpine tag at the time it was built — which
+# accumulates CVEs (notably libcrypto3) until the upstream nginx tag is
+# refreshed. Apk upgrade pulls fixed versions from the Alpine stable feed.
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
 COPY --from=build /app/packages/ce/build /srv/ce
 COPY ./ui/packages/ce/nginx.conf /etc/nginx/conf.d/ce.conf.template
 COPY ./ui/packages/ce/docker-entrypoint.sh /
