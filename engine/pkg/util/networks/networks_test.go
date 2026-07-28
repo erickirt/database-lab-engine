@@ -7,7 +7,7 @@ package networks
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/assert"
 )
 

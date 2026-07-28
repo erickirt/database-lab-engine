@@ -9,13 +9,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/docker"
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/runners"
@@ -95,6 +96,17 @@ func (ui *UIManager) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to prepare Docker image: %w", err)
 	}
 
+	var hostIP netip.Addr
+
+	if ui.cfg.Host != "" {
+		parsedIP, err := netip.ParseAddr(ui.cfg.Host)
+		if err != nil {
+			return fmt.Errorf("invalid embedded UI host %q: %w", ui.cfg.Host, err)
+		}
+
+		hostIP = parsedIP
+	}
+
 	containerID, err := tools.CreateContainerIfMissing(ctx, ui.docker, getEmbeddedUIName(ui.engProps.InstanceID),
 		&container.Config{
 			Labels: map[string]string{
@@ -114,10 +126,10 @@ func (ui *UIManager) Run(ctx context.Context) error {
 			},
 		},
 		&container.HostConfig{
-			PortBindings: map[nat.Port][]nat.PortBinding{
-				"80/tcp": {
+			PortBindings: network.PortMap{
+				network.MustParsePort("80/tcp"): {
 					{
-						HostIP:   ui.cfg.Host,
+						HostIP:   hostIP,
 						HostPort: strconv.Itoa(ui.cfg.Port),
 					},
 				},
@@ -132,7 +144,7 @@ func (ui *UIManager) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to connect UI container to the internal Docker network: %w", err)
 	}
 
-	if err := ui.docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := ui.docker.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("failed to start container %q: %w", containerID, err)
 	}
 

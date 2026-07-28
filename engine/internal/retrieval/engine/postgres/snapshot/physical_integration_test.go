@@ -13,8 +13,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/docker/docker/client"
 	_ "github.com/lib/pq"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"

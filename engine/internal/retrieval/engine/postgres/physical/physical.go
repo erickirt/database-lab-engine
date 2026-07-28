@@ -16,10 +16,9 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/diagnostic"
@@ -228,7 +227,7 @@ func (r *RestoreJob) Run(ctx context.Context) (err error) {
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", r.restoreContainerName(), contID))
 
-	if err = r.dockerClient.ContainerStart(ctx, contID, container.StartOptions{}); err != nil {
+	if _, err = r.dockerClient.ContainerStart(ctx, contID, client.ContainerStartOptions{}); err != nil {
 		return errors.Wrapf(err, "failed to start container: %v", contID)
 	}
 
@@ -239,7 +238,7 @@ func (r *RestoreJob) Run(ctx context.Context) (err error) {
 	log.Msg("Running restore command: ", r.restorer.GetRestoreCommand())
 	log.Msg(fmt.Sprintf("View logs using the command: %s %s", tools.ViewLogsCmd, r.restoreContainerName()))
 
-	if err := tools.ExecCommand(ctx, r.dockerClient, contID, container.ExecOptions{
+	if err := tools.ExecCommand(ctx, r.dockerClient, contID, client.ExecCreateOptions{
 		Cmd: []string{"bash", "-c", r.restorer.GetRestoreCommand() + " >& /proc/1/fd/1"},
 	}); err != nil {
 		return errors.Wrap(err, "failed to restore data")
@@ -283,7 +282,7 @@ func (r *RestoreJob) Run(ctx context.Context) (err error) {
 	}
 
 	// Set permissions.
-	if err := tools.ExecCommand(ctx, r.dockerClient, contID, container.ExecOptions{
+	if err := tools.ExecCommand(ctx, r.dockerClient, contID, client.ExecCreateOptions{
 		Cmd: []string{"chown", "-R", "postgres", dataDir},
 	}); err != nil {
 		return errors.Wrap(err, "failed to set permissions")
@@ -306,7 +305,7 @@ func (r *RestoreJob) startContainer(ctx context.Context, containerName string, c
 		return "", fmt.Errorf("failed to create container %q %w", containerName, err)
 	}
 
-	if err = r.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err = r.dockerClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return "", errors.Wrapf(err, "failed to start container %s", containerName)
 	}
 
@@ -318,20 +317,20 @@ func (r *RestoreJob) syncInstanceName() string {
 }
 
 func (r *RestoreJob) runSyncInstance(ctx context.Context) (err error) {
-	syncContainer, err := r.dockerClient.ContainerInspect(ctx, r.syncInstanceName())
+	syncContainer, err := r.dockerClient.ContainerInspect(ctx, r.syncInstanceName(), client.ContainerInspectOptions{})
 	if err != nil && !errdefs.IsNotFound(err) {
 		return errors.Wrap(err, "failed to inspect sync container")
 	}
 
-	if syncContainer.ContainerJSONBase != nil {
-		if syncContainer.State.Running {
+	if err == nil {
+		if syncContainer.Container.State != nil && syncContainer.Container.State.Running {
 			log.Msg("Sync instance is already running")
 			return nil
 		}
 
 		log.Msg("Removing non-running sync instance")
 
-		tools.RemoveContainer(ctx, r.dockerClient, syncContainer.ID, cont.StopPhysicalTimeout)
+		tools.RemoveContainer(ctx, r.dockerClient, syncContainer.Container.ID, cont.StopPhysicalTimeout)
 	}
 
 	syncInstanceConfig, err := r.buildSyncInstanceConfig()
@@ -344,9 +343,7 @@ func (r *RestoreJob) runSyncInstance(ctx context.Context) (err error) {
 			tools.PrintContainerLogs(ctx, r.dockerClient, r.syncInstanceName())
 			tools.PrintLastPostgresLogs(ctx, r.dockerClient, r.syncInstanceName(), r.fsPool.DataDir())
 
-			filterArgs := filters.NewArgs(
-				filters.KeyValuePair{Key: "label",
-					Value: fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabSyncLabel)})
+			filterArgs := make(client.Filters).Add("label", fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabSyncLabel))
 
 			if err := diagnostic.CollectDiagnostics(ctx, r.dockerClient, filterArgs, r.syncInstanceName(), r.fsPool.DataDir()); err != nil {
 				log.Err("failed to collect container diagnostics", err)

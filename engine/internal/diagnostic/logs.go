@@ -15,8 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"github.com/robfig/cron/v3"
 
@@ -44,7 +43,7 @@ const (
 )
 
 // CollectDiagnostics collects container output and Postgres logs.
-func CollectDiagnostics(ctx context.Context, client *client.Client, filterArgs filters.Args,
+func CollectDiagnostics(ctx context.Context, docker *client.Client, filterArgs client.Filters,
 	postgresContainerName, dbDataDir string) error {
 	diagnosticsDir, err := util.GetLogsPath(time.Now().Format(timeFormat))
 
@@ -56,13 +55,13 @@ func CollectDiagnostics(ctx context.Context, client *client.Client, filterArgs f
 		return fmt.Errorf("failed to create diagnostics dir %s %w", diagnosticsDir, err)
 	}
 
-	err = collectContainersOutput(ctx, client, diagnosticsDir, filterArgs)
+	err = collectContainersOutput(ctx, docker, diagnosticsDir, filterArgs)
 
 	if err != nil {
 		return fmt.Errorf("failed to collect containers output %w", err)
 	}
 
-	err = collectPostgresLogs(ctx, client, diagnosticsDir, postgresContainerName, dbDataDir)
+	err = collectPostgresLogs(ctx, docker, diagnosticsDir, postgresContainerName, dbDataDir)
 
 	if err != nil {
 		return fmt.Errorf("failed to collect postgres logs %w", err)
@@ -72,7 +71,7 @@ func CollectDiagnostics(ctx context.Context, client *client.Client, filterArgs f
 }
 
 // CollectContainerDiagnostics collect specific container diagnostics information.
-func CollectContainerDiagnostics(ctx context.Context, client *client.Client, containerName, dbDataDir string) {
+func CollectContainerDiagnostics(ctx context.Context, docker *client.Client, containerName, dbDataDir string) {
 	diagnosticsDir, err := util.GetLogsPath(time.Now().Format(timeFormat))
 
 	if err != nil {
@@ -85,27 +84,27 @@ func CollectContainerDiagnostics(ctx context.Context, client *client.Client, con
 		return
 	}
 
-	err = collectContainerLogs(ctx, client, diagnosticsDir, containerName)
+	err = collectContainerLogs(ctx, docker, diagnosticsDir, containerName)
 	if err != nil {
 		log.Warn("failed to collect container logs ", containerName, err)
 	}
 
-	err = collectPostgresLogs(ctx, client, diagnosticsDir, containerName, dbDataDir)
+	err = collectPostgresLogs(ctx, docker, diagnosticsDir, containerName, dbDataDir)
 
 	if err != nil {
 		log.Warn("failed to collect Postgres logs ", containerName, err)
 	}
 }
 
-func collectContainersOutput(ctx context.Context, client *client.Client, diagnosticDir string, filterArgs filters.Args) error {
-	containerList, err := tools.ListContainersByLabel(ctx, client, filterArgs)
+func collectContainersOutput(ctx context.Context, docker *client.Client, diagnosticDir string, filterArgs client.Filters) error {
+	containerList, err := tools.ListContainersByLabel(ctx, docker, filterArgs)
 
 	if err != nil {
 		return err
 	}
 
 	for _, containerName := range containerList {
-		err = collectContainerLogs(ctx, client, diagnosticDir, containerName)
+		err = collectContainerLogs(ctx, docker, diagnosticDir, containerName)
 		if err != nil {
 			log.Warn("failed to collect container logs ", containerName, err)
 		}
@@ -114,7 +113,7 @@ func collectContainersOutput(ctx context.Context, client *client.Client, diagnos
 	return nil
 }
 
-func collectContainerLogs(ctx context.Context, client *client.Client, diagnosticDir string, containerName string) error {
+func collectContainerLogs(ctx context.Context, docker *client.Client, diagnosticDir string, containerName string) error {
 	containerLogsDir := path.Join(diagnosticDir, containerName)
 
 	if err := os.MkdirAll(containerLogsDir, 0755); err != nil {
@@ -123,7 +122,7 @@ func collectContainerLogs(ctx context.Context, client *client.Client, diagnostic
 
 	stdoutFile := path.Join(containerLogsDir, containerOutputFile)
 
-	err := tools.CopyContainerLogs(ctx, client, containerName, stdoutFile)
+	err := tools.CopyContainerLogs(ctx, docker, containerName, stdoutFile)
 
 	if err != nil {
 		return fmt.Errorf("failed to get container logs %s %w", containerName, err)
@@ -174,7 +173,7 @@ func (d *Cleaner) StopLogCleanupJob() {
 	}
 }
 
-func collectPostgresLogs(ctx context.Context, client *client.Client, diagnosticDir, dbContainerName, dbDataDir string) error {
+func collectPostgresLogs(ctx context.Context, docker *client.Client, diagnosticDir, dbContainerName, dbDataDir string) error {
 	log.Dbg("Collecting postgres logs from container", dbContainerName, dbDataDir)
 	containerLogsDir := path.Join(diagnosticDir, dbContainerName)
 
@@ -184,14 +183,16 @@ func collectPostgresLogs(ctx context.Context, client *client.Client, diagnosticD
 
 	// copy logs directory from container, result is a TAR stream
 	// log directory is considered "dbDataDir/log"
-	reader, _, err := client.CopyFromContainer(ctx, dbContainerName, fmt.Sprintf("%s/log/", dbDataDir))
+	copyResult, err := docker.CopyFromContainer(ctx, dbContainerName, client.CopyFromContainerOptions{
+		SourcePath: fmt.Sprintf("%s/log/", dbDataDir),
+	})
 
 	if err != nil {
 		return fmt.Errorf("failed to copy postgres logs %w", err)
 	}
 
 	// process TAR stream and extract it as separated files
-	tr := tar.NewReader(reader)
+	tr := tar.NewReader(copyResult.Content)
 
 	for {
 		header, err := tr.Next()

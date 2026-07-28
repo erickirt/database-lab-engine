@@ -13,11 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
 	"github.com/jackc/pgx/v5"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/diagnostic"
@@ -362,7 +361,7 @@ func (d *DumpJob) Run(ctx context.Context) (err error) {
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", d.dumpContainerName(), containerID))
 
-	if err := d.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := d.dockerClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		collectDiagnostics(ctx, d.dockerClient, d.dumpContainerName(), dataDir)
 		return errors.Wrapf(err, "failed to start container %q", d.dumpContainerName())
 	}
@@ -432,7 +431,7 @@ func (d *DumpJob) Run(ctx context.Context) (err error) {
 
 		log.Msg("Running analyze command: ", analyzeCmd)
 
-		if err := tools.ExecCommand(ctx, d.dockerClient, containerID, container.ExecOptions{
+		if err := tools.ExecCommand(ctx, d.dockerClient, containerID, client.ExecCreateOptions{
 			Cmd: analyzeCmd,
 			Env: []string{"PGAPPNAME=" + dleRetrieval},
 		}); err != nil {
@@ -451,12 +450,10 @@ func (d *DumpJob) Run(ctx context.Context) (err error) {
 	return nil
 }
 
-func collectDiagnostics(ctx context.Context, client *client.Client, postgresName, dataDir string) {
-	filterArgs := filters.NewArgs(
-		filters.KeyValuePair{Key: "label",
-			Value: fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabDumpLabel)})
+func collectDiagnostics(ctx context.Context, docker *client.Client, postgresName, dataDir string) {
+	filterArgs := make(client.Filters).Add("label", fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabDumpLabel))
 
-	if err := diagnostic.CollectDiagnostics(ctx, client, filterArgs, postgresName, dataDir); err != nil {
+	if err := diagnostic.CollectDiagnostics(ctx, docker, filterArgs, postgresName, dataDir); err != nil {
 		log.Err("failed to collect container diagnostics", err)
 	}
 }
@@ -529,8 +526,8 @@ func (d *DumpJob) cleanupDumpLocation(ctx context.Context, dumpContID string, db
 
 	log.Msg("Running cleanup command: ", cleanupCmd)
 
-	if out, err := tools.ExecCommandWithOutput(ctx, d.dockerClient, dumpContID, container.ExecOptions{
-		Tty: true,
+	if out, err := tools.ExecCommandWithOutput(ctx, d.dockerClient, dumpContID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: cleanupCmd,
 	}); err != nil {
 		log.Err(out)
@@ -561,8 +558,8 @@ func (d *DumpJob) dumpDatabase(ctx context.Context, dumpContID, dbName string, d
 
 	log.Msg("Running dump command: ", dumpCommand)
 
-	if output, err := d.performDumpCommand(ctx, dumpContID, container.ExecOptions{
-		Tty: true,
+	if output, err := d.performDumpCommand(ctx, dumpContID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: dumpCommand,
 		Env: d.getExecEnvironmentVariables(),
 	}); err != nil {
@@ -587,7 +584,7 @@ func setupPGData(ctx context.Context, dockerClient *client.Client, dataDir, dump
 		return nil
 	}
 
-	if err := tools.ExecCommand(ctx, dockerClient, dumpContID, container.ExecOptions{
+	if err := tools.ExecCommand(ctx, dockerClient, dumpContID, client.ExecCreateOptions{
 		Cmd: []string{"chown", "-R", "postgres", dataDir},
 	}); err != nil {
 		return errors.Wrap(err, "failed to set permissions")
@@ -640,7 +637,7 @@ func (d *DumpJob) setupConnectionOptions(ctx context.Context) error {
 	return nil
 }
 
-func (d *DumpJob) performDumpCommand(ctx context.Context, contID string, commandCfg container.ExecOptions) (string, error) {
+func (d *DumpJob) performDumpCommand(ctx context.Context, contID string, commandCfg client.ExecCreateOptions) (string, error) {
 	if d.DumpOptions.Restore.Enabled {
 		d.dbMark.DataStateAt = time.Now().Format(tools.DataStateAtFormat)
 	}

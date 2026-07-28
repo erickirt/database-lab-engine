@@ -9,8 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"golang.org/x/mod/semver"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/retrieval/engine/postgres/tools"
@@ -114,7 +113,7 @@ func getLastBackupName(ctx context.Context, dockerClient *client.Client, contain
 
 // parseLastBackupFromList parses the name of the latest backup from "wal-g backup-list" output.
 func parseLastBackupFromList(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
-	output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
 		Cmd: []string{"bash", "-c", "wal-g backup-list | grep base | sort -nk1 | tail -1 | awk '{print $1}'"},
 	})
 	if err != nil {
@@ -128,7 +127,7 @@ func parseLastBackupFromList(ctx context.Context, dockerClient *client.Client, c
 
 // parseLastBackupFromDetails parses the name of the latest backup from "wal-g backup-list --detail" output.
 func parseLastBackupFromDetails(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
-	output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
 		Cmd: []string{"bash", "-c", "wal-g backup-list --detail | tail -1 | awk '{print $1}'"},
 	})
 	if err != nil {
@@ -142,7 +141,7 @@ func parseLastBackupFromDetails(ctx context.Context, dockerClient *client.Client
 
 // getWalgVersion fetches the WAL-G version installed in the provided container.
 func getWalgVersion(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
-	output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
 		Cmd: []string{"bash", "-c", "wal-g --version"},
 	})
 	if err != nil {

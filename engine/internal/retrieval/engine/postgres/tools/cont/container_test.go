@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/AlekSi/pointer"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,20 +57,6 @@ func TestGetContainerName(t *testing.T) {
 	}
 }
 
-func TestGetControlContainerFilters(t *testing.T) {
-	filters := getControlContainerFilters()
-	require.Len(t, filters, 1)
-	assert.Equal(t, labelFilter, filters[0].Key)
-	assert.Equal(t, DBLabControlLabel, filters[0].Value)
-}
-
-func TestGetSatelliteContainerFilters(t *testing.T) {
-	filters := getSatelliteContainerFilters()
-	require.Len(t, filters, 1)
-	assert.Equal(t, labelFilter, filters[0].Key)
-	assert.Equal(t, DBLabSatelliteLabel, filters[0].Value)
-}
-
 func TestResourceOptions(t *testing.T) {
 	testCases := []struct {
 		configOptions  map[string]interface{}
@@ -81,7 +67,6 @@ func TestResourceOptions(t *testing.T) {
 				"memory":             100000,
 				"memory-swappiness":  50,
 				"memory-reservation": 3000,
-				"kernel-memory":      "5m",
 				"memory-swap":        "100M",
 				"shm-size":           "64m",
 				"oom-kill-disable":   true,
@@ -99,7 +84,6 @@ func TestResourceOptions(t *testing.T) {
 					Memory:            100000,
 					MemorySwappiness:  pointer.ToInt64(50),
 					MemoryReservation: 3000,
-					KernelMemory:      5242880,
 					MemorySwap:        104857600,
 					OomKillDisable:    pointer.ToBool(true),
 					CpusetCpus:        "1",
@@ -117,7 +101,6 @@ func TestResourceOptions(t *testing.T) {
 				"memory":            100000,
 				"memoryswappiness":  50,
 				"memoryreservation": 3000,
-				"kernelmemory":      "5m",
 				"memoryswap":        "100M",
 				"shmsize":           "1gb",
 				"oomkilldisable":    true,
@@ -135,7 +118,6 @@ func TestResourceOptions(t *testing.T) {
 					Memory:            100000,
 					MemorySwappiness:  pointer.ToInt64(50),
 					MemoryReservation: 3000,
-					KernelMemory:      5242880,
 					MemorySwap:        104857600,
 					OomKillDisable:    pointer.ToBool(true),
 					CpusetCpus:        "1",

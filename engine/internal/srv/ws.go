@@ -7,8 +7,8 @@ import (
 	"net/http"
 
 	"github.com/ahmetalpbalkan/dlog"
-	"github.com/docker/docker/api/types/container"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/srv/api"
 	"gitlab.com/postgres-ai/database-lab/v3/pkg/log"
@@ -68,7 +68,7 @@ func (s *Server) instanceLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	readCloser, err := s.docker.ContainerLogs(r.Context(), s.engProps.ContainerName, container.LogsOptions{
+	readCloser, err := s.docker.ContainerLogs(r.Context(), s.engProps.ContainerName, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Since:      logsSinceInterval,

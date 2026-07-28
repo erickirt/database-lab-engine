@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
 	"github.com/docker/go-units"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/pool"
@@ -75,7 +74,7 @@ func StopControlContainers(ctx context.Context, dockerClient *client.Client, dbC
 	fsm pool.FSManager) error {
 	log.Msg("Stop control containers")
 
-	list, err := getContainerList(ctx, dockerClient, instanceID, getControlContainerFilters())
+	list, err := getContainerList(ctx, dockerClient, instanceID, DBLabControlLabel)
 	if err != nil {
 		return err
 	}
@@ -105,7 +104,7 @@ func StopControlContainers(ctx context.Context, dockerClient *client.Client, dbC
 
 		log.Msg("Removing control container:", containerName)
 
-		if err := dockerClient.ContainerRemove(ctx, controlCont.ID, container.RemoveOptions{
+		if _, err := dockerClient.ContainerRemove(ctx, controlCont.ID, client.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		}); err != nil {
@@ -119,7 +118,7 @@ func StopControlContainers(ctx context.Context, dockerClient *client.Client, dbC
 // CleanUpControlContainers removes control containers run by Database Lab Engine.
 func CleanUpControlContainers(ctx context.Context, dockerClient *client.Client, instanceID string) error {
 	log.Msg("Clean up control containers")
-	return cleanUpContainers(ctx, dockerClient, instanceID, getControlContainerFilters())
+	return cleanUpContainers(ctx, dockerClient, instanceID, DBLabControlLabel)
 }
 
 // CleanUpSatelliteContainers removes satellite containers run by Database Lab Engine.
@@ -129,12 +128,12 @@ func CleanUpSatelliteContainers(ctx context.Context, dockerClient *client.Client
 	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, StopTimeout*time.Second)
 	defer shutdownCancel()
 
-	return cleanUpContainers(shutdownCtx, dockerClient, instanceID, getSatelliteContainerFilters())
+	return cleanUpContainers(shutdownCtx, dockerClient, instanceID, DBLabSatelliteLabel)
 }
 
 // cleanUpContainers removes containers run by Database Lab Engine.
-func cleanUpContainers(ctx context.Context, dockerCli *client.Client, instanceID string, filter []filters.KeyValuePair) error {
-	list, err := getContainerList(ctx, dockerCli, instanceID, filter)
+func cleanUpContainers(ctx context.Context, dockerCli *client.Client, instanceID string, label string) error {
+	list, err := getContainerList(ctx, dockerCli, instanceID, label)
 	if err != nil {
 		return err
 	}
@@ -142,7 +141,7 @@ func cleanUpContainers(ctx context.Context, dockerCli *client.Client, instanceID
 	for _, controlCont := range list {
 		log.Msg("Removing container:", getContainerName(controlCont))
 
-		if err := dockerCli.ContainerRemove(ctx, controlCont.ID, container.RemoveOptions{
+		if _, err := dockerCli.ContainerRemove(ctx, controlCont.ID, client.ContainerRemoveOptions{
 			RemoveVolumes: true,
 			Force:         true,
 		}); err != nil {
@@ -153,31 +152,17 @@ func cleanUpContainers(ctx context.Context, dockerCli *client.Client, instanceID
 	return nil
 }
 
-func getContainerList(ctx context.Context, d *client.Client, instanceID string, pairs []filters.KeyValuePair) ([]container.Summary, error) {
-	filterPairs := append([]filters.KeyValuePair{
-		{
-			Key:   labelFilter,
-			Value: DBLabInstanceIDLabel + "=" + instanceID,
-		},
-	}, pairs...)
-
-	return d.ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filterPairs...),
+func getContainerList(ctx context.Context, d *client.Client, instanceID string, label string) ([]container.Summary, error) {
+	list, err := d.ContainerList(ctx, client.ContainerListOptions{
+		Filters: make(client.Filters).
+			Add(labelFilter, DBLabInstanceIDLabel+"="+instanceID).
+			Add(labelFilter, label),
 	})
-}
+	if err != nil {
+		return nil, err
+	}
 
-func getControlContainerFilters() []filters.KeyValuePair {
-	return []filters.KeyValuePair{{
-		Key:   labelFilter,
-		Value: DBLabControlLabel,
-	}}
-}
-
-func getSatelliteContainerFilters() []filters.KeyValuePair {
-	return []filters.KeyValuePair{{
-		Key:   labelFilter,
-		Value: DBLabSatelliteLabel,
-	}}
+	return list.Items, nil
 }
 
 func shouldStopInternalProcess(controlLabel string) bool {

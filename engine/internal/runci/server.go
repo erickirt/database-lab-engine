@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/docker/docker/client"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/runci/source"
 

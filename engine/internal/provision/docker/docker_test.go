@@ -7,7 +7,7 @@ package docker
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/assert"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/resources"

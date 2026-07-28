@@ -12,9 +12,9 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"github.com/jackc/pgx/v5"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	dockerTools "gitlab.com/postgres-ai/database-lab/v3/internal/provision/docker"
 	"gitlab.com/postgres-ai/database-lab/v3/internal/retrieval/engine/postgres/tools"
@@ -93,7 +93,7 @@ func (i *ImageContent) Databases() map[string]struct{} {
 
 // Collect collects extension and locale lists from the provided Docker image.
 func (i *ImageContent) Collect(dockerImage string) error {
-	docker, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	docker, err := client.New(client.FromEnv)
 	if err != nil {
 		log.Fatal("Failed to create a Docker client:", err)
 	}
@@ -206,7 +206,7 @@ func createContainer(ctx context.Context, docker *client.Client, image string, p
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", containerName, containerID))
 
-	if err := docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := docker.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return "", fmt.Errorf("failed to start container %q: %w", containerName, err)
 	}
 
@@ -244,8 +244,8 @@ func resetHBA(ctx context.Context, dockerClient *client.Client, containerID stri
 
 	log.Dbg("Reset pg_hba", command)
 
-	out, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
-		Tty: true,
+	out, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: command,
 	})
 
@@ -262,8 +262,8 @@ func setListenAddresses(ctx context.Context, dockerClient *client.Client, contai
 
 	log.Dbg("Set listen addresses", command)
 
-	out, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
-		Tty: true,
+	out, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: command,
 	})
 
@@ -280,8 +280,8 @@ func getLocales(ctx context.Context, dockerClient *client.Client, containerID st
 
 	log.Dbg("Get locale list", command)
 
-	out, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
-		Tty: true,
+	out, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: command,
 	})
 

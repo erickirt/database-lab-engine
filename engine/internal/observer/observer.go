@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/pool"

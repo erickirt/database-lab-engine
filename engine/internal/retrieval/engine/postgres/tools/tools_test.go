@@ -10,16 +10,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	imagetypes "github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	imagetypes "github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -326,8 +328,19 @@ func TestIsEmptyDirectory_NonExistent(t *testing.T) {
 	assert.Error(t, err)
 }
 
-type inspectFn func(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)
-type pullFn func(ctx context.Context, refStr string, options imagetypes.PullOptions) (io.ReadCloser, error)
+type inspectFn func(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (client.ImageInspectResult, error)
+type pullFn func(ctx context.Context, refStr string, options client.ImagePullOptions) (client.ImagePullResponse, error)
+
+// fakePullResponse implements client.ImagePullResponse over a plain reader.
+type fakePullResponse struct {
+	io.ReadCloser
+}
+
+func (f fakePullResponse) JSONMessages(context.Context) iter.Seq2[jsonstream.Message, error] {
+	return func(func(jsonstream.Message, error) bool) {}
+}
+
+func (f fakePullResponse) Wait(context.Context) error { return nil }
 
 // fakePuller implements imagePuller for testing PullImage in isolation.
 type fakePuller struct {
@@ -336,14 +349,14 @@ type fakePuller struct {
 	pullCalled bool
 }
 
-func (f *fakePuller) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
+func (f *fakePuller) ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (client.ImageInspectResult, error) {
 	if f.inspect != nil {
 		return f.inspect(ctx, imageID, opts...)
 	}
-	return imagetypes.InspectResponse{}, errors.New("inspect not implemented")
+	return client.ImageInspectResult{}, errors.New("inspect not implemented")
 }
 
-func (f *fakePuller) ImagePull(ctx context.Context, refStr string, options imagetypes.PullOptions) (io.ReadCloser, error) {
+func (f *fakePuller) ImagePull(ctx context.Context, refStr string, options client.ImagePullOptions) (client.ImagePullResponse, error) {
 	f.pullCalled = true
 	if f.pull != nil {
 		return f.pull(ctx, refStr, options)
@@ -355,25 +368,25 @@ func TestPullImage(t *testing.T) {
 	notFound := fmt.Errorf("no such image: %w", cerrdefs.ErrNotFound)
 	wrappedNotFound := fmt.Errorf("inspect failed: %w", notFound)
 
-	localImage := func(context.Context, string, ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
-		return imagetypes.InspectResponse{ID: "sha256:abc"}, nil
+	localImage := func(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return client.ImageInspectResult{InspectResponse: imagetypes.InspectResponse{ID: "sha256:abc"}}, nil
 	}
-	notFoundInspect := func(context.Context, string, ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
-		return imagetypes.InspectResponse{}, notFound
+	notFoundInspect := func(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return client.ImageInspectResult{}, notFound
 	}
-	wrappedNotFoundInspect := func(context.Context, string, ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
-		return imagetypes.InspectResponse{}, wrappedNotFound
+	wrappedNotFoundInspect := func(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return client.ImageInspectResult{}, wrappedNotFound
 	}
-	daemonDownInspect := func(context.Context, string, ...client.ImageInspectOption) (imagetypes.InspectResponse, error) {
-		return imagetypes.InspectResponse{}, errors.New("daemon down")
+	daemonDownInspect := func(context.Context, string, ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+		return client.ImageInspectResult{}, errors.New("daemon down")
 	}
 
-	emptyStream := func(context.Context, string, imagetypes.PullOptions) (io.ReadCloser, error) {
-		return io.NopCloser(strings.NewReader("")), nil
+	emptyStream := func(context.Context, string, client.ImagePullOptions) (client.ImagePullResponse, error) {
+		return fakePullResponse{io.NopCloser(strings.NewReader(""))}, nil
 	}
-	errorStream := func(context.Context, string, imagetypes.PullOptions) (io.ReadCloser, error) {
+	errorStream := func(context.Context, string, client.ImagePullOptions) (client.ImagePullResponse, error) {
 		body := `{"errorDetail":{"message":"manifest for postgresai/extended-postgres:99-bogus not found: manifest unknown"},"error":"manifest unknown"}`
-		return io.NopCloser(strings.NewReader(body)), nil
+		return fakePullResponse{io.NopCloser(strings.NewReader(body))}, nil
 	}
 
 	testCases := []struct {

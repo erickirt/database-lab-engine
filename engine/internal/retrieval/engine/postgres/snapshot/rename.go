@@ -9,9 +9,8 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/diagnostic"
 	"gitlab.com/postgres-ai/database-lab/v3/internal/retrieval/engine/postgres/tools"
@@ -50,7 +49,7 @@ func executeDatabaseRenames(
 
 		cmd := buildRenameCommand(user, connDB, oldName, newName)
 
-		output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{Cmd: cmd})
+		output, err := tools.ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{Cmd: cmd})
 		if err != nil {
 			return fmt.Errorf("failed to rename database %q to %q: %w", oldName, newName, err)
 		}
@@ -126,9 +125,7 @@ func runDatabaseRename(ctx context.Context, params renameParams) error {
 			tools.PrintContainerLogs(ctx, params.dockerClient, containerName)
 			tools.PrintLastPostgresLogs(ctx, params.dockerClient, containerName, params.dataDir)
 
-			filterArgs := filters.NewArgs(
-				filters.KeyValuePair{Key: "label",
-					Value: fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabRenameLabel)})
+			filterArgs := make(client.Filters).Add("label", fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabRenameLabel))
 
 			if diagErr := diagnostic.CollectDiagnostics(ctx, params.dockerClient, filterArgs, containerName, params.dataDir); diagErr != nil {
 				log.Err("failed to collect rename container diagnostics", diagErr)
@@ -138,7 +135,7 @@ func runDatabaseRename(ctx context.Context, params renameParams) error {
 
 	log.Msg(fmt.Sprintf("Running rename container: %s. ID: %v", containerName, containerID))
 
-	if err = params.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err = params.dockerClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("failed to start rename container: %w", err)
 	}
 

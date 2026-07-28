@@ -15,8 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +67,7 @@ func TestContainerOutputCollection(t *testing.T) {
 	// wait some time to generate container logs
 	time.Sleep(5 * time.Second)
 
-	filterArgs := filters.NewArgs()
+	filterArgs := make(client.Filters)
 	filterArgs.Add("label", fmt.Sprintf("%s=%s", cont.DBLabSatelliteLabel, cont.DBLabEmbeddedUILabel))
 	err = collectContainersOutput(ctx, docker, dir, filterArgs)
 	require.NoError(t, err)
