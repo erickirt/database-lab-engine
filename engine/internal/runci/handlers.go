@@ -13,9 +13,10 @@ import (
 	"os"
 	"path"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"github.com/rs/xid"
 
@@ -189,7 +190,12 @@ func (s *Server) runCommands(ctx context.Context, clone *models.Clone, runID str
 		networkConfig.EndpointsConfig = map[string]*network.EndpointSettings{"clone_network": {NetworkID: s.networkID}}
 	}
 
-	contRunner, err := s.docker.ContainerCreate(ctx, containerCfg, hostConfig, networkConfig, nil, containerName)
+	contRunner, err := s.docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           containerCfg,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkConfig,
+		Name:             containerName,
+	})
 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create container")
@@ -201,7 +207,7 @@ func (s *Server) runCommands(ctx context.Context, clone *models.Clone, runID str
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", containerName, contRunner.ID))
 
-	if err := s.docker.ContainerStart(ctx, contRunner.ID, container.StartOptions{}); err != nil {
+	if _, err := s.docker.ContainerStart(ctx, contRunner.ID, client.ContainerStartOptions{}); err != nil {
 		return nil, errors.Wrapf(err, "failed to start container %q", containerName)
 	}
 
@@ -232,7 +238,7 @@ func (s *Server) runCommands(ctx context.Context, clone *models.Clone, runID str
 
 		log.Msg("Running command: ", cmd)
 
-		output, err := tools.ExecCommandWithOutput(ctx, s.docker, contRunner.ID, container.ExecOptions{
+		output, err := tools.ExecCommandWithOutput(ctx, s.docker, contRunner.ID, client.ExecCreateOptions{
 			Cmd: cmd,
 		})
 		if err != nil {

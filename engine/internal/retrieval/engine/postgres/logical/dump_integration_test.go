@@ -14,10 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -63,9 +61,11 @@ func TestStartExisingDumpContainer(t *testing.T) {
 	assert.NoError(t, err)
 
 	// create dump container and stop it
-	containerResp, err := docker.ContainerCreate(ctx, job.buildContainerConfig(""), nil, &network.NetworkingConfig{},
-		nil, job.dumpContainerName(),
-	)
+	containerResp, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           job.buildContainerConfig(""),
+		NetworkingConfig: &network.NetworkingConfig{},
+		Name:             job.dumpContainerName(),
+	})
 	assert.NoError(t, err)
 
 	// clean container in case of any error
@@ -74,18 +74,17 @@ func TestStartExisingDumpContainer(t *testing.T) {
 	job.Run(ctx)
 
 	// list containers and check that container job container got processed
-	filterArgs := filters.NewArgs()
+	filterArgs := make(client.Filters)
 	filterArgs.Add("name", job.dumpContainerName())
 
 	list, err := docker.ContainerList(
 		ctx,
-		container.ListOptions{
+		client.ContainerListOptions{
 			All:     false,
 			Filters: filterArgs,
 		},
 	)
 
 	require.NoError(t, err)
-	assert.Empty(t, list)
-
+	assert.Empty(t, list.Items)
 }

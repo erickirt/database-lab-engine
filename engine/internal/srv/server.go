@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/AlekSi/pointer"
-	"github.com/docker/docker/client"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"

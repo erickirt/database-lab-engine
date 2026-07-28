@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/pool"
 	"gitlab.com/postgres-ai/database-lab/v3/pkg/config/global"
@@ -398,7 +398,7 @@ func (c *Collector) fetchSingleContainerStats(ctx context.Context, clone *models
 	statsCtx, cancel := context.WithTimeout(ctx, dockerStatsTimeout)
 	defer cancel()
 
-	stats, err := c.dockerClient.ContainerStatsOneShot(statsCtx, clone.ID)
+	stats, err := c.dockerClient.ContainerStats(statsCtx, clone.ID, client.ContainerStatsOptions{})
 	if err != nil {
 		log.Dbg(fmt.Sprintf("failed to get container stats for clone %s: %v", clone.ID, err))
 

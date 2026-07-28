@@ -11,10 +11,9 @@ import (
 	"path"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
+	"github.com/moby/moby/api/types/container"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"github.com/pkg/errors"
 
@@ -254,9 +253,7 @@ func (s *LogicalInitial) runPreprocessingQueries(ctx context.Context, dataDir st
 			tools.PrintContainerLogs(ctx, s.dockerClient, s.patchContainerName())
 			tools.PrintLastPostgresLogs(ctx, s.dockerClient, s.patchContainerName(), dataDir)
 
-			filterArgs := filters.NewArgs(
-				filters.KeyValuePair{Key: "label",
-					Value: fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabPatchLabel)})
+			filterArgs := make(client.Filters).Add("label", fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabPatchLabel))
 
 			if err := diagnostic.CollectDiagnostics(ctx, s.dockerClient, filterArgs, s.patchContainerName(), dataDir); err != nil {
 				log.Err("failed to collect container diagnostics", err)
@@ -266,7 +263,7 @@ func (s *LogicalInitial) runPreprocessingQueries(ctx context.Context, dataDir st
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", s.patchContainerName(), containerID))
 
-	if err := s.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := s.dockerClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return errors.Wrap(err, "failed to start container")
 	}
 

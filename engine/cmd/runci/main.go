@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/platform"
@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	dockerCLI, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	dockerCLI, err := client.New(client.FromEnv)
 	if err != nil {
 		log.Fatal("Failed to create a Docker client:", err)
 	}
@@ -51,13 +51,19 @@ func main() {
 			return
 		}
 
-		if err := dockerCLI.NetworkConnect(context.Background(), networkID, hostname, &network.EndpointSettings{}); err != nil {
+		if _, err := dockerCLI.NetworkConnect(context.Background(), networkID, client.NetworkConnectOptions{
+			Container:      hostname,
+			EndpointConfig: &network.EndpointSettings{},
+		}); err != nil {
 			log.Errf(err.Error())
 			return
 		}
 
 		defer func() {
-			if err := dockerCLI.NetworkDisconnect(context.Background(), networkID, hostname, true); err != nil {
+			if _, err := dockerCLI.NetworkDisconnect(context.Background(), networkID, client.NetworkDisconnectOptions{
+				Container: hostname,
+				Force:     true,
+			}); err != nil {
 				log.Errf(err.Error())
 				return
 			}
@@ -115,27 +121,27 @@ func discoverNetwork(ctx context.Context, cfg *runci.Config, dockerCLI *client.C
 		return ""
 	}
 
-	inspection, err := dockerCLI.ContainerInspect(ctx, tools.TrimPort(parsedURL.Host))
+	inspection, err := dockerCLI.ContainerInspect(ctx, tools.TrimPort(parsedURL.Host), client.ContainerInspectOptions{})
 	if err != nil {
 		log.Errf(err.Error())
 		return ""
 	}
 
-	log.Dbg("ContainerInspect: ", inspection.ID)
-	log.Dbg("ContainerInspect: ", inspection.NetworkSettings.Networks)
+	log.Dbg("ContainerInspect: ", inspection.Container.ID)
+	log.Dbg("ContainerInspect: ", inspection.Container.NetworkSettings.Networks)
 
 	networkID := ""
 
-	for networkLabel, endpointSettings := range inspection.NetworkSettings.Networks {
+	for networkLabel, endpointSettings := range inspection.Container.NetworkSettings.Networks {
 		if strings.HasPrefix(networkLabel, networks.NetworkPrefix) {
-			networkResource, err := dockerCLI.NetworkInspect(ctx, endpointSettings.NetworkID, network.InspectOptions{})
+			networkResource, err := dockerCLI.NetworkInspect(ctx, endpointSettings.NetworkID, client.NetworkInspectOptions{})
 			if err != nil {
 				log.Err(err)
 				continue
 			}
 
-			networkApp := networkResource.Labels["app"]
-			networkType := networkResource.Labels["type"]
+			networkApp := networkResource.Network.Labels["app"]
+			networkType := networkResource.Network.Labels["type"]
 
 			if networkApp == networks.DLEApp && networkType == networks.InternalType {
 				networkID = endpointSettings.NetworkID

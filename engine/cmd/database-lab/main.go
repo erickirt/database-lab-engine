@@ -18,8 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/billing"
@@ -62,7 +61,7 @@ func main() {
 
 	config.ApplyGlobals(cfg)
 
-	docker, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	docker, err := client.New(client.FromEnv)
 	if err != nil {
 		log.Fatal("Failed to create a Docker client:", err)
 	}
@@ -274,14 +273,16 @@ func main() {
 func getNetworkGateway(docker *client.Client, internalNetworkID string) string {
 	gateway := ""
 
-	networkResource, err := docker.NetworkInspect(context.Background(), internalNetworkID, network.InspectOptions{})
+	networkResource, err := docker.NetworkInspect(context.Background(), internalNetworkID, client.NetworkInspectOptions{})
 	if err != nil {
 		log.Err(err.Error())
 		return gateway
 	}
 
-	if len(networkResource.IPAM.Config) > 0 {
-		gateway = networkResource.IPAM.Config[0].Gateway
+	if len(networkResource.Network.IPAM.Config) > 0 {
+		if gw := networkResource.Network.IPAM.Config[0].Gateway; gw.IsValid() {
+			gateway = gw.String()
+		}
 	}
 
 	return gateway
@@ -293,7 +294,7 @@ func getEngineProperties(ctx context.Context, docker *client.Client, cfg *config
 		return global.EngineProps{}, errors.New("hostname is empty")
 	}
 
-	dleContainer, err := docker.ContainerInspect(ctx, hostname)
+	dleContainer, err := docker.ContainerInspect(ctx, hostname, client.ContainerInspectOptions{})
 	if err != nil {
 		return global.EngineProps{}, fmt.Errorf("failed to inspect DLE container: %w", err)
 	}
@@ -310,7 +311,7 @@ func getEngineProperties(ctx context.Context, docker *client.Client, cfg *config
 
 	engProps := global.EngineProps{
 		InstanceID:     instanceID,
-		ContainerName:  strings.Trim(dleContainer.Name, "/"),
+		ContainerName:  strings.Trim(dleContainer.Container.Name, "/"),
 		Infrastructure: infra,
 		EnginePort:     cfg.Server.Port,
 	}

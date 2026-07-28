@@ -7,10 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	"github.com/jackc/pgx/v5"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/retrieval/engine/postgres/tools"
 	"gitlab.com/postgres-ai/database-lab/v3/internal/retrieval/engine/postgres/tools/activity"
@@ -78,13 +77,13 @@ func dbSourceActivity(ctx context.Context, connStr string, dbCfg Connection) ([]
 }
 
 func pgContainerActivity(ctx context.Context, docker *client.Client, containerID string, db global.Database) ([]activity.PGEvent, error) {
-	ins, err := docker.ContainerInspect(ctx, containerID)
+	ins, err := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check PG container activity: %w", err)
 	}
 
-	if ins.State.Health.Status != types.Healthy {
-		log.Dbg("Target container is not ready yet: ", ins.State.Health.Status)
+	if ins.Container.State.Health.Status != container.Healthy {
+		log.Dbg("Target container is not ready yet: ", ins.Container.State.Health.Status)
 		return []activity.PGEvent{}, nil
 	}
 
@@ -95,8 +94,8 @@ func pgContainerActivity(ctx context.Context, docker *client.Client, containerID
 
 	log.Msg("Running activity command: ", activityCmd)
 
-	execCfg := container.ExecOptions{
-		Tty: true,
+	execCfg := client.ExecCreateOptions{
+		TTY: true,
 		Cmd: activityCmd,
 	}
 

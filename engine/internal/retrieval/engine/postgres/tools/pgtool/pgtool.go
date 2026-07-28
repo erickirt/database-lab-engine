@@ -10,32 +10,30 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 )
 
 // ReadControlData reads a control data file.
-func ReadControlData(ctx context.Context, d *client.Client, contID, dataDir string, pgVersion float64) (types.HijackedResponse, error) {
-	controlDataCmd, err := d.ContainerExecCreate(ctx, contID, pgControlDataConfig(dataDir, pgVersion))
+func ReadControlData(ctx context.Context, d *client.Client, contID, dataDir string, pgVersion float64) (client.HijackedResponse, error) {
+	controlDataCmd, err := d.ExecCreate(ctx, contID, pgControlDataConfig(dataDir, pgVersion))
 
 	if err != nil {
-		return types.HijackedResponse{}, errors.Wrap(err, "failed to create an exec command")
+		return client.HijackedResponse{}, errors.Wrap(err, "failed to create an exec command")
 	}
 
-	attachResponse, err := d.ContainerExecAttach(ctx, controlDataCmd.ID, container.ExecStartOptions{})
+	attachResponse, err := d.ExecAttach(ctx, controlDataCmd.ID, client.ExecAttachOptions{})
 	if err != nil {
-		return types.HijackedResponse{}, errors.Wrap(err, "failed to attach to the exec command")
+		return client.HijackedResponse{}, errors.Wrap(err, "failed to attach to the exec command")
 	}
 
-	return attachResponse, nil
+	return attachResponse.HijackedResponse, nil
 }
 
-func pgControlDataConfig(pgDataDir string, pgVersion float64) container.ExecOptions {
+func pgControlDataConfig(pgDataDir string, pgVersion float64) client.ExecCreateOptions {
 	command := fmt.Sprintf("/usr/lib/postgresql/%g/bin/pg_controldata", pgVersion)
 
-	return container.ExecOptions{
+	return client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          []string{command, "-D", pgDataDir},

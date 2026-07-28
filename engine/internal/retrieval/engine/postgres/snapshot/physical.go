@@ -19,9 +19,8 @@ import (
 
 	"github.com/araddon/dateparse"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/pkg/errors"
 
@@ -472,12 +471,14 @@ func (p *PhysicalInitial) cleanupOldLogs() error {
 func (p *PhysicalInitial) checkSyncInstance(ctx context.Context) (string, error) {
 	log.Msg("Check the sync instance state: ", p.syncInstanceName())
 
-	syncContainer, err := p.dockerClient.ContainerInspect(ctx, p.syncInstanceName())
+	syncContainer, err := p.dockerClient.ContainerInspect(ctx, p.syncInstanceName(), client.ContainerInspectOptions{})
 	if err != nil {
 		return "", err
 	}
 
-	if err := tools.CheckContainerReadiness(ctx, p.dockerClient, syncContainer.ID); err != nil {
+	syncContainerID := syncContainer.Container.ID
+
+	if err := tools.CheckContainerReadiness(ctx, p.dockerClient, syncContainerID); err != nil {
 		return "", errors.Wrap(err, "failed to readiness check")
 	}
 
@@ -486,14 +487,14 @@ func (p *PhysicalInitial) checkSyncInstance(ctx context.Context) (string, error)
 	if err := tools.RunCheckpoint(
 		ctx,
 		p.dockerClient,
-		syncContainer.ID,
+		syncContainerID,
 		p.globalCfg.Database.User(),
 		p.globalCfg.Database.Name(),
 	); err != nil {
 		return "", errors.Wrap(err, "failed to make a checkpoint for sync instance")
 	}
 
-	extractedDataStateAt, err := p.getLastXActReplayTimestamp(ctx, syncContainer.ID)
+	extractedDataStateAt, err := p.getLastXActReplayTimestamp(ctx, syncContainerID)
 	if err != nil {
 		return "", errors.Wrap(err, `failed to get last replay timestamp from the sync instance`)
 	}
@@ -664,9 +665,7 @@ func (p *PhysicalInitial) promoteInstance(ctx context.Context, clonePath string,
 			tools.PrintContainerLogs(ctx, p.dockerClient, p.promoteContainerName())
 			tools.PrintLastPostgresLogs(ctx, p.dockerClient, p.promoteContainerName(), clonePath)
 
-			filterArgs := filters.NewArgs(
-				filters.KeyValuePair{Key: "label",
-					Value: fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabPromoteLabel)})
+			filterArgs := make(client.Filters).Add("label", fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabPromoteLabel))
 
 			if err := diagnostic.CollectDiagnostics(ctx, p.dockerClient, filterArgs, p.promoteContainerName(), clonePath); err != nil {
 				log.Err("failed to collect container diagnostics", err)
@@ -676,7 +675,7 @@ func (p *PhysicalInitial) promoteInstance(ctx context.Context, clonePath string,
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", p.promoteContainerName(), containerID))
 
-	if err := p.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := p.dockerClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return errors.Wrap(err, "failed to start container")
 	}
 
@@ -781,7 +780,7 @@ func (p *PhysicalInitial) getDSAFromWAL(ctx context.Context, pgVersion float64, 
 
 	walDirectory := walDir(cloneDir)
 
-	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, client.ExecCreateOptions{
 		Cmd: []string{"ls", "-t", walDirectory},
 	})
 	if err != nil {
@@ -824,7 +823,7 @@ func (p *PhysicalInitial) parseWAL(
 ) string {
 	cmd := walCommand(pgVersion, walFilePath)
 
-	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, client.ExecCreateOptions{
 		Cmd: []string{"sh", "-c", cmd},
 	})
 	if err != nil {
@@ -994,7 +993,7 @@ func (p *PhysicalInitial) checkRecovery(ctx context.Context, containerID string)
 
 	log.Msg("Check recovery command", checkRecoveryCmd)
 
-	output, err := tools.ExecCommandWithResponse(ctx, p.dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithResponse(ctx, p.dockerClient, containerID, client.ExecCreateOptions{
 		Cmd:          checkRecoveryCmd,
 		AttachStderr: false,
 		AttachStdout: true,
@@ -1078,7 +1077,7 @@ func (p *PhysicalInitial) getLastXActReplayTimestamp(ctx context.Context, contai
 
 	log.Msg("Running dataStateAt command", extractionCommand)
 
-	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, client.ExecCreateOptions{
 		Cmd:  extractionCommand,
 		User: defaults.Username,
 	})
@@ -1117,7 +1116,7 @@ func (p *PhysicalInitial) runPromoteCommand(ctx context.Context, containerID, cl
 
 	log.Msg("Running promote command", promoteCommand)
 
-	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, container.ExecOptions{
+	output, err := tools.ExecCommandWithOutput(ctx, p.dockerClient, containerID, client.ExecCreateOptions{
 		User: defaults.Username,
 		Cmd:  promoteCommand,
 		Env: []string{

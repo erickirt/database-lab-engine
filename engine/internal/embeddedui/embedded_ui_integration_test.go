@@ -11,9 +11,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -61,19 +60,19 @@ func TestStartExistingContainer(t *testing.T) {
 	require.NoError(t, err)
 
 	// list containers
-	filterArgs := filters.NewArgs()
+	filterArgs := make(client.Filters)
 	filterArgs.Add("name", getEmbeddedUIName(engProps.InstanceID))
 
 	list, err := docker.ContainerList(
 		ctx,
-		container.ListOptions{
+		client.ContainerListOptions{
 			All:     true,
 			Filters: filterArgs,
 		},
 	)
 
 	require.NoError(t, err)
-	assert.NotEmpty(t, list)
+	assert.NotEmpty(t, list.Items)
 	// initial container
-	assert.Equal(t, "running", list[0].State)
+	assert.Equal(t, container.StateRunning, list.Items[0].State)
 }

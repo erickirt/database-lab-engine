@@ -12,9 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 
@@ -731,9 +730,7 @@ func (r *Retrieval) ReportSyncStatus(ctx context.Context) (*models.Sync, error) 
 		}, nil
 	}
 
-	filterArgs := filters.NewArgs(
-		filters.KeyValuePair{Key: "label",
-			Value: fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabSyncLabel)})
+	filterArgs := make(client.Filters).Add("label", fmt.Sprintf("%s=%s", cont.DBLabControlLabel, cont.DBLabSyncLabel))
 
 	filterArgs.Add("label", fmt.Sprintf("%s=%s", cont.DBLabInstanceIDLabel, r.engineProps.InstanceID))
 
@@ -758,22 +755,24 @@ func (r *Retrieval) ReportSyncStatus(ctx context.Context) (*models.Sync, error) 
 }
 
 func (r *Retrieval) reportContainerSyncStatus(ctx context.Context, containerID string) (*models.Sync, error) {
-	resp, err := r.docker.ContainerInspect(ctx, containerID)
+	resp, err := r.docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container %w", err)
 	}
 
-	if resp.State == nil {
+	state := resp.Container.State
+
+	if state == nil {
 		return nil, fmt.Errorf("failed to read container state")
 	}
 
-	if resp.State.Health != nil && resp.State.Health.Status == types.Unhealthy {
+	if state.Health != nil && state.Health.Status == container.Unhealthy {
 		// in case of Unhealthy state, add health check output to status
 		var healthCheckOutput = ""
 
-		if healthCheckLength := len(resp.State.Health.Log); healthCheckLength > 0 {
-			if lastHealthCheck := resp.State.Health.Log[healthCheckLength-1]; lastHealthCheck.ExitCode > 1 {
+		if healthCheckLength := len(state.Health.Log); healthCheckLength > 0 {
+			if lastHealthCheck := state.Health.Log[healthCheckLength-1]; lastHealthCheck.ExitCode > 1 {
 				healthCheckOutput = lastHealthCheck.Output
 			}
 		}
@@ -796,7 +795,7 @@ func (r *Retrieval) reportContainerSyncStatus(ctx context.Context, containerID s
 		}, nil
 	}
 
-	socketPath := filepath.Join(firstPool.Pool().SocketDir(), resp.Name)
+	socketPath := filepath.Join(firstPool.Pool().SocketDir(), resp.Container.Name)
 	value, err := status.FetchSyncMetrics(ctx, r.global, socketPath)
 
 	if err != nil {
@@ -810,7 +809,7 @@ func (r *Retrieval) reportContainerSyncStatus(ctx context.Context, containerID s
 		}, nil
 	}
 
-	value.StartedAt = resp.State.StartedAt
+	value.StartedAt = state.StartedAt
 
 	return value, nil
 }

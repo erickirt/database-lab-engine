@@ -20,8 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/databases/postgres"
@@ -905,7 +904,9 @@ func (p *Provisioner) ReconnectClone(ctx context.Context, cloneName string) erro
 
 // StartCloneContainer starts clone container.
 func (p *Provisioner) StartCloneContainer(ctx context.Context, containerName string) error {
-	return p.dockerClient.ContainerStart(ctx, containerName, container.StartOptions{})
+	_, err := p.dockerClient.ContainerStart(ctx, containerName, client.ContainerStartOptions{})
+
+	return err
 }
 
 // DetectDBVersion detects version of the database.

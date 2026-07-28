@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	_ "github.com/lib/pq" // Register Postgres database driver.
 
@@ -129,7 +129,7 @@ func Start(r runners.Runner, c *resources.AppConfig) error {
 }
 
 func collectDiagnostics(c *resources.AppConfig) {
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
 		log.Fatal("Failed to create a Docker client:", err)
 	}

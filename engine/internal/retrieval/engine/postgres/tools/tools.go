@@ -23,16 +23,12 @@ import (
 	"github.com/AlekSi/pointer"
 	"github.com/ahmetalpbalkan/dlog"
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/cli/cli/streams"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	imagetypes "github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/jsonmessage"
 	"github.com/pkg/errors"
 	"github.com/sethvargo/go-password/password"
 	"github.com/shirou/gopsutil/host"
@@ -166,12 +162,12 @@ func AddVolumesToHostConfig(ctx context.Context, docker *client.Client, hostConf
 	if IsInDocker() {
 		log.Dbg("host info: ", hostInfo.Hostname)
 
-		inspection, err := docker.ContainerInspect(ctx, hostInfo.Hostname)
+		inspection, err := docker.ContainerInspect(ctx, hostInfo.Hostname, client.ContainerInspectOptions{})
 		if err != nil {
 			return err
 		}
 
-		hostConfig.Mounts = GetMountsFromMountPoints(dataDir, inspection.Mounts)
+		hostConfig.Mounts = GetMountsFromMountPoints(dataDir, inspection.Container.Mounts)
 	} else {
 		hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
 			Type:   mount.TypeBind,
@@ -242,8 +238,8 @@ func InitDB(ctx context.Context, dockerClient *client.Client, containerID string
 
 	log.Dbg("Init db", initCommand)
 
-	out, err := ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
-		Tty: true,
+	out, err := ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: initCommand,
 	})
 
@@ -262,7 +258,7 @@ func MakeDir(ctx context.Context, dockerClient *client.Client, dumpContID, dataD
 
 	log.Msg("Running mkdir command: ", mkdirCmd)
 
-	if out, err := ExecCommandWithOutput(ctx, dockerClient, dumpContID, container.ExecOptions{
+	if out, err := ExecCommandWithOutput(ctx, dockerClient, dumpContID, client.ExecCreateOptions{
 		Cmd:  mkdirCmd,
 		User: defaults.Username,
 	}); err != nil {
@@ -279,8 +275,8 @@ func LsContainerDirectory(ctx context.Context, dockerClient *client.Client, cont
 
 	log.Dbg("Check directory: ", lsCommand)
 
-	out, err := ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
-		Tty: true,
+	out, err := ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: lsCommand,
 	})
 
@@ -301,8 +297,8 @@ func StartPostgres(ctx context.Context, dockerClient *client.Client, containerID
 
 	log.Msg("Starting PostgreSQL instance", startCommand)
 
-	out, err := ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
-		Tty: true,
+	out, err := ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: startCommand,
 	})
 
@@ -338,7 +334,7 @@ func RunCheckpoint(
 		ctx,
 		dockerClient,
 		containerID,
-		container.ExecOptions{Cmd: commandCheckpoint},
+		client.ExecCreateOptions{Cmd: commandCheckpoint},
 	)
 	if err != nil {
 		return errors.Wrap(err, "failed to make checkpoint")
@@ -361,7 +357,7 @@ func StopPostgres(ctx context.Context, dockerClient *client.Client, containerID,
 
 	log.Msg("Stopping PostgreSQL instance", stopCommand)
 
-	if output, err := ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{
+	if output, err := ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{
 		User: defaults.Username,
 		Cmd:  stopCommand,
 	}); err != nil {
@@ -385,22 +381,24 @@ func CheckContainerReadiness(ctx context.Context, dockerClient *client.Client, c
 		default:
 		}
 
-		resp, err := dockerClient.ContainerInspect(ctx, containerID)
+		resp, err := dockerClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 		if err != nil {
 			return errors.Wrapf(err, "failed to inspect container %s", containerID)
 		}
 
-		if resp.State != nil && resp.State.Health != nil {
-			switch resp.State.Health.Status {
-			case types.Healthy:
+		state := resp.Container.State
+
+		if state != nil && state.Health != nil {
+			switch state.Health.Status {
+			case container.Healthy:
 				return nil
 
-			case types.Unhealthy:
+			case container.Unhealthy:
 				return fmt.Errorf("container health check failed. The maximum number of attempts has reached: %d",
-					resp.Config.Healthcheck.Retries)
+					resp.Container.Config.Healthcheck.Retries)
 			}
 
-			if healthCheckLength := len(resp.State.Health.Log); healthCheckLength > 0 {
+			if healthCheckLength := len(state.Health.Log); healthCheckLength > 0 {
 				// Checking exit code 2 and 3 because pg_isready returns
 				//  0 to the shell if the server is accepting connections normally,
 				//  1 if the server is rejecting connections (for example during startup),
@@ -408,7 +406,7 @@ func CheckContainerReadiness(ctx context.Context, dockerClient *client.Client, c
 				//  3 if no attempt was made (for example due to invalid parameters).
 				// Supposedly, the status 2 will be returned in cases where the server is not running
 				// and will not start on its own, so there is no reason to wait for all specified retries.
-				if lastHealthCheck := resp.State.Health.Log[healthCheckLength-1]; lastHealthCheck.ExitCode > 1 {
+				if lastHealthCheck := state.Health.Log[healthCheckLength-1]; lastHealthCheck.ExitCode > 1 {
 					if errorRepeats >= health.HCRetries {
 						return &ErrHealthCheck{
 							ExitCode: lastHealthCheck.ExitCode,
@@ -427,7 +425,7 @@ func CheckContainerReadiness(ctx context.Context, dockerClient *client.Client, c
 
 // PrintContainerLogs prints container output.
 func PrintContainerLogs(ctx context.Context, dockerClient *client.Client, containerID string) {
-	logs, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{
+	logs, err := dockerClient.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
 		Since:      essentialLogsInterval,
 		ShowStdout: true,
 		ShowStderr: true,
@@ -452,7 +450,7 @@ func PrintContainerLogs(ctx context.Context, dockerClient *client.Client, contai
 }
 
 func printPostgresLogsHint(ctx context.Context, dockerClient *client.Client, containerID string) {
-	ins, err := dockerClient.ContainerInspect(ctx, containerID)
+	ins, err := dockerClient.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		log.Err(errors.Wrapf(err, "failed to inspect container %s", containerID))
 		return
@@ -466,7 +464,7 @@ func printPostgresLogsHint(ctx context.Context, dockerClient *client.Client, con
 
 	var logsHostDir = defaultLogsDir
 
-	for _, m := range ins.Mounts {
+	for _, m := range ins.Container.Mounts {
 		if m.Destination == logsRoot {
 			logsHostDir = m.Source
 			break
@@ -515,7 +513,7 @@ func tryTailCSV(ctx context.Context, dockerClient *client.Client, containerID, c
 		`[ -z "$f" ] && exit 0; tail -n "$2" -- "$f"`
 	cmd := []string{"bash", "-c", script, "_", clonePath, strconv.Itoa(defaultPostgresLogTailLines)}
 
-	output, err := ExecCommandWithOutput(ctx, dockerClient, containerID, container.ExecOptions{Cmd: cmd})
+	output, err := ExecCommandWithOutput(ctx, dockerClient, containerID, client.ExecCreateOptions{Cmd: cmd})
 	if err != nil {
 		log.Warn("failed to read Postgres CSV logs: ", err)
 		return ""
@@ -533,7 +531,7 @@ func tryTailCSV(ctx context.Context, dockerClient *client.Client, containerID, c
 // partial buffer is returned along with the error so the caller can still
 // surface diagnostics.
 func tailContainerLogs(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
-	reader, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{
+	reader, err := dockerClient.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Tail:       strconv.Itoa(defaultPostgresLogTailLines),
@@ -560,7 +558,7 @@ func tailContainerLogs(ctx context.Context, dockerClient *client.Client, contain
 func StopContainer(ctx context.Context, dockerClient *client.Client, containerID string, stopTimeout int) {
 	log.Msg(fmt.Sprintf("Stopping container ID: %v", containerID))
 
-	if err := dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: pointer.ToInt(stopTimeout)}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: pointer.ToInt(stopTimeout)}); err != nil {
 		log.Err("failed to stop container: ", err)
 	}
 
@@ -571,13 +569,13 @@ func StopContainer(ctx context.Context, dockerClient *client.Client, containerID
 func RemoveContainer(ctx context.Context, dockerClient *client.Client, containerID string, stopTimeout int) {
 	log.Msg(fmt.Sprintf("Removing container ID: %v", containerID))
 
-	if err := dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: pointer.ToInt(stopTimeout)}); err != nil {
+	if _, err := dockerClient.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: pointer.ToInt(stopTimeout)}); err != nil {
 		log.Err("failed to stop container: ", err)
 	}
 
 	log.Msg(fmt.Sprintf("Container %q has been stopped", containerID))
 
-	if err := dockerClient.ContainerRemove(ctx, containerID, container.RemoveOptions{
+	if _, err := dockerClient.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	}); err != nil {
@@ -592,8 +590,8 @@ func RemoveContainer(ctx context.Context, dockerClient *client.Client, container
 // imagePuller is the minimal subset of the Docker client used by PullImage.
 // Defined as an interface so PullImage can be unit-tested with a fake client.
 type imagePuller interface {
-	ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (imagetypes.InspectResponse, error)
-	ImagePull(ctx context.Context, refStr string, options imagetypes.PullOptions) (io.ReadCloser, error)
+	ImageInspect(ctx context.Context, imageID string, opts ...client.ImageInspectOption) (client.ImageInspectResult, error)
+	ImagePull(ctx context.Context, refStr string, options client.ImagePullOptions) (client.ImagePullResponse, error)
 }
 
 // PullImage pulls a Docker image if it is not already present locally.
@@ -608,14 +606,14 @@ func PullImage(ctx context.Context, dockerClient imagePuller, image string) erro
 		return nil
 	}
 
-	pullOutput, err := dockerClient.ImagePull(ctx, image, imagetypes.PullOptions{})
+	pullOutput, err := dockerClient.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
 		return errors.Wrapf(err, "failed to pull image %q", image)
 	}
 
 	defer func() { _ = pullOutput.Close() }()
 
-	if err := jsonmessage.DisplayJSONMessagesToStream(pullOutput, streams.NewOut(os.Stdout), nil); err != nil {
+	if err := jsonmessage.DisplayStream(pullOutput, os.Stdout); err != nil {
 		return errors.Wrapf(err, "failed to pull image %q", image)
 	}
 
@@ -623,16 +621,16 @@ func PullImage(ctx context.Context, dockerClient imagePuller, image string) erro
 }
 
 // ExecCommand runs command in Docker container.
-func ExecCommand(ctx context.Context, dockerClient *client.Client, containerID string, execCfg container.ExecOptions) error {
+func ExecCommand(ctx context.Context, dockerClient *client.Client, containerID string, execCfg client.ExecCreateOptions) error {
 	execCfg.AttachStdout = true
 	execCfg.AttachStderr = true
 
-	execCommand, err := dockerClient.ContainerExecCreate(ctx, containerID, execCfg)
+	execCommand, err := dockerClient.ExecCreate(ctx, containerID, execCfg)
 	if err != nil {
 		return errors.Wrap(err, "failed to create command")
 	}
 
-	if err := dockerClient.ContainerExecStart(ctx, execCommand.ID, container.ExecStartOptions{}); err != nil {
+	if _, err := dockerClient.ExecStart(ctx, execCommand.ID, client.ExecStartOptions{}); err != nil {
 		return errors.Wrap(err, "failed to start a command")
 	}
 
@@ -645,7 +643,7 @@ func ExecCommand(ctx context.Context, dockerClient *client.Client, containerID s
 
 // inspectCommandExitCode inspects success of command execution.
 func inspectCommandExitCode(ctx context.Context, dockerClient *client.Client, commandID string) error {
-	inspect, err := dockerClient.ContainerExecInspect(ctx, commandID)
+	inspect, err := dockerClient.ExecInspect(ctx, commandID, client.ExecInspectOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to create command")
 	}
@@ -663,7 +661,7 @@ func inspectCommandExitCode(ctx context.Context, dockerClient *client.Client, co
 
 // ExecCommandWithOutput runs command in Docker container, enables all stdout and stderr and returns the command output.
 func ExecCommandWithOutput(
-	ctx context.Context, dockerClient *client.Client, containerID string, execCfg container.ExecOptions,
+	ctx context.Context, dockerClient *client.Client, containerID string, execCfg client.ExecCreateOptions,
 ) (string, error) {
 	execCfg.AttachStdout = true
 	execCfg.AttachStderr = true
@@ -673,21 +671,21 @@ func ExecCommandWithOutput(
 
 // ExecCommandWithResponse runs command in Docker container and returns the command output.
 func ExecCommandWithResponse(
-	ctx context.Context, docker *client.Client, containerID string, execCfg container.ExecOptions,
+	ctx context.Context, docker *client.Client, containerID string, execCfg client.ExecCreateOptions,
 ) (string, error) {
 	return execCommandWithResponse(ctx, docker, containerID, execCfg)
 }
 
 func execCommandWithResponse(
-	ctx context.Context, docker *client.Client, containerID string, execCfg container.ExecOptions,
+	ctx context.Context, docker *client.Client, containerID string, execCfg client.ExecCreateOptions,
 ) (string, error) {
-	execCommand, err := docker.ContainerExecCreate(ctx, containerID, execCfg)
+	execCommand, err := docker.ExecCreate(ctx, containerID, execCfg)
 
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create an exec command")
 	}
 
-	attachResponse, err := docker.ContainerExecAttach(ctx, execCommand.ID, container.ExecStartOptions{})
+	attachResponse, err := docker.ExecAttach(ctx, execCommand.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return "", errors.Wrap(err, "failed to attach to exec command")
 	}
@@ -699,7 +697,7 @@ func execCommandWithResponse(
 		return string(output), errors.Wrap(err, "failed to read response of exec command")
 	}
 
-	inspection, err := docker.ContainerExecInspect(ctx, execCommand.ID)
+	inspection, err := docker.ExecInspect(ctx, execCommand.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect an exec process: %w", err)
 	}
@@ -750,15 +748,18 @@ func processAttachResponse(ctx context.Context, reader io.Reader) ([]byte, error
 // If a container with the same name already exists, its ID is returned.
 func CreateContainerIfMissing(ctx context.Context, docker *client.Client, containerName string,
 	config *container.Config, hostConfig *container.HostConfig) (string, error) {
-	containerData, err := docker.ContainerInspect(ctx, containerName)
+	containerData, err := docker.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{})
 
 	if err == nil {
-		return containerData.ID, nil
+		return containerData.Container.ID, nil
 	}
 
-	createdContainer, err := docker.ContainerCreate(ctx, config, hostConfig, &network.NetworkingConfig{},
-		nil, containerName,
-	)
+	createdContainer, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           config,
+		HostConfig:       hostConfig,
+		NetworkingConfig: &network.NetworkingConfig{},
+		Name:             containerName,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -767,9 +768,9 @@ func CreateContainerIfMissing(ctx context.Context, docker *client.Client, contai
 }
 
 // ListContainersByLabel lists containers by label name and value.
-func ListContainersByLabel(ctx context.Context, docker *client.Client, filterArgs filters.Args) ([]string, error) {
+func ListContainersByLabel(ctx context.Context, docker *client.Client, filterArgs client.Filters) ([]string, error) {
 	list, err := docker.ContainerList(ctx,
-		container.ListOptions{
+		client.ContainerListOptions{
 			All:     true,
 			Filters: filterArgs,
 		})
@@ -778,9 +779,9 @@ func ListContainersByLabel(ctx context.Context, docker *client.Client, filterArg
 		return nil, err
 	}
 
-	var containers = make([]string, 0, len(list))
+	var containers = make([]string, 0, len(list.Items))
 
-	for _, c := range list {
+	for _, c := range list.Items {
 		containers = append(containers, c.Names[0])
 	}
 
@@ -789,7 +790,7 @@ func ListContainersByLabel(ctx context.Context, docker *client.Client, filterArg
 
 // CopyContainerLogs collects container logs.
 func CopyContainerLogs(ctx context.Context, docker *client.Client, containerName, filePath string) error {
-	reader, err := docker.ContainerLogs(ctx, containerName, container.LogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true})
+	reader, err := docker.ContainerLogs(ctx, containerName, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true})
 
 	if err != nil {
 		return err

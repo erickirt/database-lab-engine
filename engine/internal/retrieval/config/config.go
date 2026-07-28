@@ -6,7 +6,7 @@
 package config
 
 import (
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/resources"
 	"gitlab.com/postgres-ai/database-lab/v3/internal/retrieval/dbmarker"

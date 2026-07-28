@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
 	"gitlab.com/postgres-ai/database-lab/v3/internal/provision/resources"
@@ -251,7 +251,7 @@ func (r *RestoreJob) Run(ctx context.Context) (err error) {
 
 	log.Msg(fmt.Sprintf("Running container: %s. ID: %v", r.restoreContainerName(), containerID))
 
-	if err := r.dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := r.dockerClient.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return errors.Wrapf(err, "failed to start container %q", r.restoreContainerName())
 	}
 
@@ -292,7 +292,7 @@ func (r *RestoreJob) Run(ctx context.Context) (err error) {
 
 	log.Msg("Running analyze command: ", analyzeCmd)
 
-	if err := tools.ExecCommand(ctx, r.dockerClient, containerID, container.ExecOptions{
+	if err := tools.ExecCommand(ctx, r.dockerClient, containerID, client.ExecCreateOptions{
 		Cmd: analyzeCmd,
 		Env: []string{"PGAPPNAME=" + dleRetrieval},
 	}); err != nil {
@@ -408,7 +408,7 @@ func (r *RestoreJob) extractDBNameFromDump(ctx context.Context, contID, dumpPath
 	extractDBNameCmd := fmt.Sprintf("pg_restore --list %s | grep %s | tr -d '[;]'", dumpPath, prefixDBName)
 	log.Msg("Extract database name: ", extractDBNameCmd)
 
-	outputLine, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, container.ExecOptions{
+	outputLine, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, client.ExecCreateOptions{
 		Cmd: []string{"bash", "-c", extractDBNameCmd},
 	})
 	if err != nil {
@@ -573,8 +573,8 @@ func (r *RestoreJob) restoreDB(ctx context.Context, contID, dbName string, dbDef
 
 		log.Msg("Running preparatory command to create list file for "+dbName, preCmd)
 
-		output, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, container.ExecOptions{
-			Tty: true,
+		output, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, client.ExecCreateOptions{
+			TTY: true,
 			Cmd: preCmd,
 			Env: []string{"PGAPPNAME=" + dleRetrieval},
 		})
@@ -589,8 +589,8 @@ func (r *RestoreJob) restoreDB(ctx context.Context, contID, dbName string, dbDef
 	restoreCommand := r.buildLogicalRestoreCommand(dbName, dbDefinition, tmpListFile)
 	log.Msg("Running restore command for "+dbName, restoreCommand)
 
-	output, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, container.ExecOptions{
-		Tty: true,
+	output, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, client.ExecCreateOptions{
+		TTY: true,
 		Cmd: restoreCommand,
 		Env: []string{"PGAPPNAME=" + dleRetrieval},
 	})
@@ -647,7 +647,7 @@ func (r *RestoreJob) prepareDB(ctx context.Context, contID, dbName string) error
 	cmd := []string{"psql", "--username", r.globalCfg.Database.User(), "--dbname", defaults.DBName, "--file", dstPath}
 	log.Msg("Run command", cmd)
 
-	if out, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, container.ExecOptions{Tty: true, Cmd: cmd}); err != nil {
+	if out, err := tools.ExecCommandWithOutput(ctx, r.dockerClient, contID, client.ExecCreateOptions{TTY: true, Cmd: cmd}); err != nil {
 		log.Dbg("Command output: ", out)
 		return errors.Wrap(err, "failed to exec restore command")
 	}
@@ -662,7 +662,9 @@ func (r *RestoreJob) prepareArchive(ctx context.Context, contID string, tempFile
 	}
 
 	dstDir := filepath.Dir(dstPath)
-	if err := r.dockerClient.CopyToContainer(ctx, contID, dstDir, archiveReader, container.CopyToContainerOptions{
+	if _, err := r.dockerClient.CopyToContainer(ctx, contID, client.CopyToContainerOptions{
+		DestinationPath:           dstDir,
+		Content:                   archiveReader,
 		AllowOverwriteDirWithFile: true,
 		CopyUIDGID:                true,
 	}); err != nil {
@@ -758,7 +760,7 @@ func (r *RestoreJob) retrieveDataStateAt(ctx context.Context, contID, dumpLocati
 
 	log.Dbg("Running a restore metadata command: ", restoreMetaCmd)
 
-	execCommand, err := r.dockerClient.ContainerExecCreate(ctx, contID, container.ExecOptions{
+	execCommand, err := r.dockerClient.ExecCreate(ctx, contID, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Cmd:          restoreMetaCmd,
@@ -767,7 +769,7 @@ func (r *RestoreJob) retrieveDataStateAt(ctx context.Context, contID, dumpLocati
 		return "", errors.Wrap(err, "failed to create a restore metadata command")
 	}
 
-	execAttach, err := r.dockerClient.ContainerExecAttach(ctx, execCommand.ID, container.ExecStartOptions{})
+	execAttach, err := r.dockerClient.ExecAttach(ctx, execCommand.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return "", errors.Wrap(err, "failed to exec a restore metadata command")
 	}

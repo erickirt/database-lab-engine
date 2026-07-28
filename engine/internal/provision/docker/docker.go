@@ -15,10 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	imagetypes "github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/host"
 
@@ -274,10 +272,10 @@ func PrepareImage(ctx context.Context, docker *client.Client, dockerImage string
 
 // ImageExists checks existence of Docker image.
 func ImageExists(ctx context.Context, docker *client.Client, dockerImage string) (bool, error) {
-	filterArgs := filters.NewArgs()
+	filterArgs := make(client.Filters)
 	filterArgs.Add(referenceKey, dockerImage)
 
-	list, err := docker.ImageList(ctx, imagetypes.ListOptions{
+	list, err := docker.ImageList(ctx, client.ImageListOptions{
 		All:     false,
 		Filters: filterArgs,
 	})
@@ -286,12 +284,12 @@ func ImageExists(ctx context.Context, docker *client.Client, dockerImage string)
 		return false, fmt.Errorf("failed to list images: %w", err)
 	}
 
-	return len(list) > 0, nil
+	return len(list.Items) > 0, nil
 }
 
 // PullImage pulls Docker image from DockerHub registry.
 func PullImage(ctx context.Context, docker *client.Client, dockerImage string) error {
-	pullResponse, err := docker.ImagePull(ctx, dockerImage, imagetypes.PullOptions{})
+	pullResponse, err := docker.ImagePull(ctx, dockerImage, client.ImagePullOptions{})
 
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
@@ -324,10 +322,10 @@ func PullImage(ctx context.Context, docker *client.Client, dockerImage string) e
 
 // IsContainerRunning checks if specified container is running.
 func IsContainerRunning(ctx context.Context, docker *client.Client, containerName string) (bool, error) {
-	inspection, err := docker.ContainerInspect(ctx, containerName)
+	inspection, err := docker.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{})
 	if err != nil {
 		return false, fmt.Errorf("failed to inpect container: %w", err)
 	}
 
-	return inspection.State.Running, nil
+	return inspection.Container.State.Running, nil
 }
