@@ -7,11 +7,13 @@ package cont
 
 import (
 	"context"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 
@@ -24,6 +26,12 @@ import (
 
 const (
 	labelFilter = "label"
+
+	// volumeConfigKey defines the container configuration key holding an extra bind mount.
+	volumeConfigKey = "volume"
+
+	// bindsConfigKey defines the Docker host config field the configured volume is mapped to.
+	bindsConfigKey = "binds"
 
 	// StopTimeout defines a container stop timeout in seconds.
 	StopTimeout = 30
@@ -184,11 +192,14 @@ func BuildHostConfig(ctx context.Context, docker *client.Client, dataDir string,
 	hostConfig := &container.HostConfig{
 		Resources: hostOptions.Resources,
 		ShmSize:   hostOptions.ShmSize,
+		Binds:     hostOptions.Binds,
 	}
 
 	if err := tools.AddVolumesToHostConfig(ctx, docker, hostConfig, dataDir); err != nil {
 		return nil, err
 	}
+
+	hostConfig.Binds, hostConfig.Mounts = resolveMountConflicts(hostConfig.Binds, hostConfig.Mounts, dataDir)
 
 	return hostConfig, nil
 }
@@ -199,6 +210,17 @@ func ResourceOptions(containerConfigs map[string]interface{}) (*container.HostCo
 
 	for configKey, configValue := range containerConfigs {
 		normalizedKey := strings.ToLower(strings.ReplaceAll(configKey, "-", ""))
+
+		if normalizedKey == volumeConfigKey {
+			bind, ok := configValue.(string)
+			if !ok {
+				return nil, errors.Errorf("container configuration volume must be a string, got %T", configValue)
+			}
+
+			normalizedConfig[bindsConfigKey] = []string{bind}
+
+			continue
+		}
 
 		// Convert human-readable string representing an amount of memory.
 		if valueString, ok := configValue.(string); ok {
@@ -226,4 +248,68 @@ func ResourceOptions(containerConfigs map[string]interface{}) (*container.HostCo
 	hostConfig.Resources = resources
 
 	return hostConfig, nil
+}
+
+// resolveMountConflicts keeps configured binds and inherited mounts compatible. Docker rejects a host
+// config with duplicate mount points, so an inherited mount is dropped in favour of a bind targeting the
+// same destination. The data directory mount is required by every retrieval job, therefore a bind
+// shadowing it is skipped instead.
+func resolveMountConflicts(binds []string, mounts []mount.Mount, dataDir string) ([]string, []mount.Mount) {
+	if len(binds) == 0 {
+		return binds, mounts
+	}
+
+	destinations := make(map[string]struct{}, len(binds))
+	keptBinds := make([]string, 0, len(binds))
+
+	for _, bind := range binds {
+		destination := bindDestination(bind)
+
+		if destination == normalizePath(dataDir) {
+			log.Warn("container configuration volume shadows the data directory, skipping: ", bind)
+			continue
+		}
+
+		if _, ok := destinations[destination]; ok {
+			log.Warn("container configuration volume duplicates a destination, skipping: ", bind)
+			continue
+		}
+
+		destinations[destination] = struct{}{}
+
+		keptBinds = append(keptBinds, bind)
+	}
+
+	keptMounts := make([]mount.Mount, 0, len(mounts))
+
+	for _, inherited := range mounts {
+		if _, ok := destinations[normalizePath(inherited.Target)]; ok {
+			log.Dbg("inherited mount overridden by a container configuration volume: ", inherited.Target)
+			continue
+		}
+
+		keptMounts = append(keptMounts, inherited)
+	}
+
+	return keptBinds, keptMounts
+}
+
+// bindDestination extracts the container-side path of a "source:destination[:options]" bind specification.
+func bindDestination(bind string) string {
+	_, destination, found := strings.Cut(bind, ":")
+	if !found {
+		return normalizePath(bind)
+	}
+
+	destination, _, _ = strings.Cut(destination, ":")
+
+	return normalizePath(destination)
+}
+
+func normalizePath(mountPath string) string {
+	if mountPath == "" {
+		return mountPath
+	}
+
+	return path.Clean(mountPath)
 }
