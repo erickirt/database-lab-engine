@@ -42,6 +42,39 @@ check-code-style:
     <<: *cache
     policy: push
 
+.ui_pnpm_setup: &ui_pnpm_setup
+  - corepack enable
+  - corepack prepare pnpm@8.15.9 --activate
+  - export PNPM_HOME=/usr/local/bin
+  - pnpm config set store-dir /builds/postgres-ai/database-lab/.pnpm-store/
+
+ce-unit-tests:
+  <<: *ui_checks
+  <<: *ui_cache
+  stage: test
+  variables:
+    CYPRESS_INSTALL_BINARY: "0"
+  before_script: *ui_pnpm_setup
+  script:
+    - pnpm --dir ui/ install --frozen-lockfile
+    - pnpm --dir ui/ --filter @postgres.ai/ce test
+  interruptible: true
+
+# The result depends on the advisory database at run time, not on the commit,
+# so a newly published CVE must not block unrelated merge requests.
+ce-dependency-audit:
+  <<: *ui_checks
+  <<: *ui_cache
+  stage: test
+  allow_failure: true
+  variables:
+    CYPRESS_INSTALL_BINARY: "0"
+  before_script: *ui_pnpm_setup
+  script:
+    - pnpm --dir ui/ install --frozen-lockfile
+    - pnpm --dir ui/ audit --prod --audit-level high
+  interruptible: true
+
 semgrep-sast:
   stage: test
   image:
