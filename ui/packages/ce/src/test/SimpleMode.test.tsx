@@ -260,7 +260,7 @@ describe('SimpleMode form', () => {
 
     await waitFor(() => expect(screen.getByTestId('preview-card')).toBeInTheDocument())
     expect(getSeImages).toHaveBeenCalledWith({ packageGroup: 'rds' })
-    expect(screen.getByText('registry.example.com/se/rds:15-se-1')).toBeInTheDocument()
+    expect(screen.getAllByText('registry.example.com/se/rds:15-se-1')).toHaveLength(2)
 
     fireEvent.click(screen.getByTestId('preview-apply'))
     await waitFor(() => expect(updateConfig).toHaveBeenCalledTimes(1))
